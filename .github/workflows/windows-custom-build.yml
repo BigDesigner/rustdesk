@@ -1,0 +1,151 @@
+name: Windows Custom Build (Destek.exe)
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_ip:
+        description: 'Rendezvous Server IP / Host'
+        required: false
+        default: '130.61.69.181'
+      server_key:
+        description: 'Server Public Key'
+        required: false
+        default: 'ARtU1Y9FU869kBMyY0w8Yt3H9hlJHubpZWxUX2Jmzgc='
+
+permissions:
+  contents: write
+
+jobs:
+  build-destek:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download official RustDesk release
+        shell: pwsh
+        run: |
+          $release = gh release view -R rustdesk/rustdesk --json tagName -q .tagName
+          Write-Host "Latest RustDesk release is $release"
+          gh release download -R rustdesk/rustdesk -p "rustdesk-*-x86_64.exe" -D download_temp
+          $exe = Get-ChildItem download_temp\rustdesk-*-x86_64.exe | Select-Object -First 1
+          Move-Item $exe.FullName .\rustdesk-base.exe
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Compile Custom Destek.exe
+        shell: pwsh
+        run: |
+          $hostIp = "${{ inputs.server_ip }}"
+          if ([string]::IsNullOrWhiteSpace($hostIp)) {
+            $hostIp = "${{ secrets.RENDEZVOUS_SERVER }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($hostIp)) {
+            $hostIp = "130.61.69.181"
+          }
+
+          $key = "${{ inputs.server_key }}"
+          if ([string]::IsNullOrWhiteSpace($key)) {
+            $key = "${{ secrets.RS_PUB_KEY }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($key)) {
+            $key = "ARtU1Y9FU869kBMyY0w8Yt3H9hlJHubpZWxUX2Jmzgc="
+          }
+
+          Write-Host "Embedding Server Host: $hostIp"
+          Write-Host "Embedding Server Key:  $key"
+
+          $csharpCode = @"
+          using System;
+          using System.IO;
+          using System.Diagnostics;
+          using System.Reflection;
+
+          namespace GNN_Destek
+          {
+              class Program
+              {
+                  const string Host = "$hostIp";
+                  const string Key = "$key";
+                  const string AppName = "rustdesk-qs-host=" + Host + ",key=" + Key + ".exe";
+
+                  [STAThread]
+                  static void Main(string[] args)
+                  {
+                      try
+                      {
+                          string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                          string targetDir = Path.Combine(localAppData, "GNN_Destek");
+                          Directory.CreateDirectory(targetDir);
+
+                          string targetExe = Path.Combine(targetDir, AppName);
+
+                          Assembly assembly = Assembly.GetExecutingAssembly();
+                          using (Stream stream = assembly.GetManifestResourceStream("rustdesk_payload"))
+                          {
+                              if (stream != null)
+                              {
+                                  bool needWrite = true;
+                                  if (File.Exists(targetExe))
+                                  {
+                                      FileInfo fi = new FileInfo(targetExe);
+                                      if (fi.Length == stream.Length)
+                                      {
+                                          needWrite = false;
+                                      }
+                                  }
+
+                                  if (needWrite)
+                                  {
+                                      using (FileStream fs = new FileStream(targetExe, FileMode.Create, FileAccess.Write, FileShare.None))
+                                      {
+                                          stream.CopyTo(fs);
+                                      }
+                                  }
+                              }
+                          }
+
+                          if (!File.Exists(targetExe))
+                          {
+                              return;
+                          }
+
+                          ProcessStartInfo psi = new ProcessStartInfo(targetExe);
+                          if (args != null && args.Length > 0)
+                          {
+                              psi.Arguments = string.Join(" ", args);
+                          }
+                          else
+                          {
+                              psi.Arguments = "--quick_support";
+                          }
+
+                          psi.EnvironmentVariables["RUSTDESK_APPNAME"] = AppName;
+                          psi.UseShellExecute = false;
+                          psi.CreateNoWindow = true;
+
+                          Process.Start(psi);
+                      }
+                      catch (Exception)
+                      {
+                      }
+                  }
+              }
+          }
+          "@
+
+          Set-Content -Path Program.cs -Value $csharpCode -Encoding UTF8
+
+          $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          & $csc /target:winexe /win32icon:res\icon.ico /resource:rustdesk-base.exe,rustdesk_payload /out:Destek.exe /optimize+ Program.cs
+
+          if (!(Test-Path Destek.exe)) {
+            Write-Error "Destek.exe compilation failed"
+            exit 1
+          }
+
+      - name: Upload Destek.exe as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Destek-QuickSupport-x64
+          path: Destek.exe
