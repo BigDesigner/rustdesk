@@ -2460,6 +2460,18 @@ pub fn rustdesk_interval(i: Interval) -> ThrottledInterval {
 }
 
 pub fn load_custom_client() {
+    if Config::get_option("custom-rendezvous-server").is_empty() {
+        Config::set_option("custom-rendezvous-server".into(), "130.61.69.181".into());
+    }
+    if Config::get_option("relay-server").is_empty() {
+        Config::set_option("relay-server".into(), "130.61.69.181".into());
+    }
+    if Config::get_option("key").is_empty() {
+        Config::set_option("key".into(), "ARtU1Y9FU869kBMyY0w8Yt3H9hlJHubpZWxUX2Jmzgc=".into());
+    }
+    if Config::get_option("api-server").is_empty() {
+        Config::set_option("api-server".into(), "http://130.61.69.181:21114".into());
+    }
     #[cfg(debug_assertions)]
     if let Ok(data) = std::fs::read_to_string("./custom.txt") {
         read_custom_client(data.trim());
