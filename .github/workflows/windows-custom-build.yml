@@ -11,6 +11,10 @@ on:
         description: 'Server Public Key'
         required: false
         default: 'ARtU1Y9FU869kBMyY0w8Yt3H9hlJHubpZWxUX2Jmzgc='
+      permanent_password:
+        description: 'Permanent Password for Unattended Access'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -22,11 +26,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download official RustDesk release
+      - name: Download latest official RustDesk release
         shell: pwsh
         run: |
           $release = gh release view -R rustdesk/rustdesk --json tagName -q .tagName
-          Write-Host "Latest RustDesk release is $release"
+          Write-Host "Latest official RustDesk release is $release"
           gh release download -R rustdesk/rustdesk -p "rustdesk-*-x86_64.exe" -D download_temp
           $exe = Get-ChildItem download_temp\rustdesk-*-x86_64.exe | Select-Object -First 1
           Move-Item $exe.FullName .\rustdesk-base.exe
@@ -52,8 +56,22 @@ jobs:
             $key = "ARtU1Y9FU869kBMyY0w8Yt3H9hlJHubpZWxUX2Jmzgc="
           }
 
+          $pass = "${{ inputs.permanent_password }}"
+          if ([string]::IsNullOrWhiteSpace($pass)) {
+            $pass = "${{ secrets.PERMANENT_PASSWORD }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($pass)) {
+            $pass = "Gnn2922**"
+          }
+
           Write-Host "Embedding Server Host: $hostIp"
           Write-Host "Embedding Server Key:  $key"
+          Write-Host "Embedding Permanent Password..."
+
+          $salt = "kcn9xw6tidzqj42w5prrmzhw8s9fva96"
+          $sha256 = [System.Security.Cryptography.SHA256]::Create()
+          $hashBytes = $sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($pass + $salt))
+          $passHash = "00" + [System.Convert]::ToBase64String($hashBytes)
 
           $csharpCode = @"
           using System;
@@ -68,12 +86,38 @@ jobs:
                   const string Host = "$hostIp";
                   const string Key = "$key";
                   const string AppName = "rustdesk-qs-host=" + Host + ",key=" + Key + ".exe";
+                  const string PasswordHash = "$passHash";
+                  const string Salt = "$salt";
 
                   [STAThread]
                   static void Main(string[] args)
                   {
                       try
                       {
+                          // 1. Setup RustDesk Config in %APPDATA%\RustDesk\config
+                          string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                          string rustdeskConfigDir = Path.Combine(appData, "RustDesk", "config");
+                          Directory.CreateDirectory(rustdeskConfigDir);
+
+                          string rustdesk2Toml = Path.Combine(rustdeskConfigDir, "RustDesk2.toml");
+                          string toml2Content = "rendezvous_server = '" + Host + ":21116'\n\n" +
+                                                "[options]\n" +
+                                                "custom-rendezvous-server = '" + Host + "'\n" +
+                                                "key = '" + Key + "'\n" +
+                                                "verification-method = 'use-permanent-password'\n" +
+                                                "hide-network-settings = 'Y'\n" +
+                                                "disable-change-permanent-password = 'Y'\n";
+                          File.WriteAllText(rustdesk2Toml, toml2Content);
+
+                          string rustdeskToml = Path.Combine(rustdeskConfigDir, "RustDesk.toml");
+                          string toml1Content = "password = '" + PasswordHash + "'\n" +
+                                                "salt = '" + Salt + "'\n" +
+                                                "key_confirmed = true\n\n" +
+                                                "[keys_confirmed]\n" +
+                                                "\"" + Host + ":21116\" = true\n";
+                          File.WriteAllText(rustdeskToml, toml1Content);
+
+                          // 2. Setup executable payload in %LOCALAPPDATA%\GNN_Destek
                           string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                           string targetDir = Path.Combine(localAppData, "GNN_Destek");
                           Directory.CreateDirectory(targetDir);
@@ -110,6 +154,7 @@ jobs:
                               return;
                           }
 
+                          // 3. Launch QuickSupport process
                           ProcessStartInfo psi = new ProcessStartInfo(targetExe);
                           if (args != null && args.Length > 0)
                           {
