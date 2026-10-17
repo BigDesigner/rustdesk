@@ -1177,12 +1177,17 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
 
 #[inline]
 pub fn get_app_name() -> String {
-    hbb_common::config::APP_NAME.read().unwrap().clone()
+    let name = hbb_common::config::APP_NAME.read().unwrap().clone();
+    if name == "RustDesk" {
+        "GNN_Destek".to_owned()
+    } else {
+        name
+    }
 }
 
 #[inline]
 pub fn is_rustdesk() -> bool {
-    hbb_common::config::APP_NAME.read().unwrap().eq("RustDesk")
+    false
 }
 
 #[inline]
@@ -1216,7 +1221,7 @@ pub fn get_custom_rendezvous_server(custom: String) -> String {
     if !config::PROD_RENDEZVOUS_SERVER.read().unwrap().is_empty() {
         return config::PROD_RENDEZVOUS_SERVER.read().unwrap().clone();
     }
-    "".to_owned()
+    "130.61.69.181".to_owned()
 }
 
 #[inline]
@@ -2120,7 +2125,7 @@ pub async fn get_key(sync: bool) -> String {
         options.remove("key").unwrap_or_default()
     };
     if key.is_empty() {
-        key = config::RS_PUB_KEY.to_owned();
+        key = "ARtU1Y9FU869kBMyY0w8Yt3H9hlJHubpZWxUX2Jmzgc=".to_owned();
     }
     key
 }
@@ -2645,6 +2650,9 @@ pub fn get_hwid() -> Bytes {
 
 #[inline]
 pub fn get_builtin_option(key: &str) -> String {
+    if key == "hide-network-settings" {
+        return "Y".to_string();
+    }
     config::BUILTIN_SETTINGS
         .read()
         .unwrap()
