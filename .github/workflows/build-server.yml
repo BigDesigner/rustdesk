@@ -1,0 +1,39 @@
+name: Build RustDesk Server (PR 706)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build hbbs & hbbr with PR 706
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git build-essential
+
+      - name: Checkout rustdesk-server with PR 706
+        run: |
+          git clone --recurse-submodules https://github.com/rustdesk/rustdesk-server.git
+          cd rustdesk-server
+          git fetch origin pull/706/head:pr-706
+          git checkout pr-706
+          git submodule update --init --recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binaries
+        run: |
+          cd rustdesk-server
+          cargo build --release --bin hbbs --bin hbbr
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-server-linux-x64
+          path: |
+            rustdesk-server/target/release/hbbs
+            rustdesk-server/target/release/hbbr
