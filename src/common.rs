@@ -2472,6 +2472,23 @@ pub fn load_custom_client() {
     if Config::get_option("api-server").is_empty() {
         Config::set_option("api-server".into(), "http://130.61.69.181:21114".into());
     }
+
+    *config::APP_NAME.write().unwrap() = "GNN_Destek".to_string();
+
+    let is_admin_mode = std::env::args().any(|arg| arg == "--full" || arg == "--admin")
+        || std::env::current_exe()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()))
+            .map_or(false, |name| name.contains("admin") || name.contains("full"));
+
+    if !is_admin_mode {
+        let mut hard = config::HARD_SETTINGS.write().unwrap();
+        hard.insert("conn-type".to_string(), "incoming".to_string());
+        hard.insert("disable-settings".to_string(), "Y".to_string());
+        hard.insert("disable-installation".to_string(), "Y".to_string());
+        hard.insert("disable-account".to_string(), "Y".to_string());
+        hard.insert("disable-ab".to_string(), "Y".to_string());
+    }
     #[cfg(debug_assertions)]
     if let Ok(data) = std::fs::read_to_string("./custom.txt") {
         read_custom_client(data.trim());
