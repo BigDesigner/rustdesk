@@ -1,4 +1,4 @@
-name: Build Windows Destek (GNN)
+name: Build GNNQS.exe (Windows)
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
       - 'libs/**'
       - 'flutter/**'
       - 'res/**'
-      - '.github/workflows/build-windows-destek.yml'
+      - '.github/workflows/build-windows-gnnqs.yml'
 
 permissions:
   contents: write
@@ -185,8 +185,7 @@ jobs:
           python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
           popd
           mkdir -p ./SignOutput
-          cp ./target/release/rustdesk-portable-packer.exe ./SignOutput/GNNQS.exe
-          cp ./target/release/rustdesk-portable-packer.exe ./SignOutput/Destek.exe
+          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/GNNQS.exe
 
       - name: Upload GNNQS.exe Artifact
         uses: actions/upload-artifact@v4
