@@ -187,8 +187,65 @@ jobs:
           mkdir -p ./SignOutput
           mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/GNNQS.exe
 
+      - name: Sign GNNQS.exe with Self-Signed Certificate
+        shell: pwsh
+        run: |
+          Write-Host "Creating Code Signing Certificate for GNN Destek..."
+          
+          # 1. Create self-signed code signing certificate
+          $cert = New-SelfSignedCertificate `
+            -Type CodeSigningCert `
+            -Subject "CN=GNN Bilgi Teknolojileri, O=GNN Destek, C=TR" `
+            -KeySpec Signature `
+            -KeyExportPolicy Exportable `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -NotAfter (Get-Date).AddYears(5)
+            
+          $certPwd = ConvertTo-SecureString -String "Gnn2922**" -Force -AsPlainText
+          
+          # 2. Export PFX and public CER
+          Export-PfxCertificate -Cert $cert -FilePath ./SignOutput/gnn_codesign.pfx -Password $certPwd | Out-Null
+          Export-Certificate -Cert $cert -FilePath ./SignOutput/GNN-RootCA.cer | Out-Null
+          
+          # 3. Locate signtool.exe from Windows Kits
+          $signtool = (Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          Write-Host "Found signtool at: $signtool"
+          
+          # 4. Sign with RFC 3161 Timestamp (DigiCert / Sectigo)
+          $timestampUrls = @(
+            "http://timestamp.digicert.com",
+            "http://timestamp.sectigo.com",
+            "http://timestamp.globalsign.com/scripts/timstamp.dll"
+          )
+          
+          $signed = $false
+          foreach ($ts in $timestampUrls) {
+            Write-Host "Signing with timestamp: $ts"
+            & $signtool sign /f ./SignOutput/gnn_codesign.pfx /p "Gnn2922**" /fd sha256 /tr $ts /td sha256 /d "GNN Hizli Destek" /du "https://gnn.tr" ./SignOutput/GNNQS.exe
+            if ($LASTEXITCODE -eq 0) {
+              $signed = $true
+              Write-Host "Code signing and timestamping succeeded!"
+              break
+            }
+          }
+          
+          if (-not $signed) {
+            Write-Warning "Timestamping failed or timed out, falling back to standalone signature..."
+            & $signtool sign /f ./SignOutput/gnn_codesign.pfx /p "Gnn2922**" /fd sha256 /d "GNN Hizli Destek" ./SignOutput/GNNQS.exe
+          }
+          
+          # 5. Verify signature
+          & $signtool verify /pa /v ./SignOutput/GNNQS.exe
+          
+          # 6. Create helper batch script for customers to install the root certificate with 1 click
+          $batContent = "@echo off`r`nNET FILE >nul 2>&1`r`nif '%errorlevel%' NEQ '0' (`r`n    powershell -Command `"Start-Process cmd -ArgumentList '/c \`"`%~f0\`"`' -Verb RunAs`"`r`n    exit /b`r`n)`r`necho GNN Guvenlik Sertifikasi Guvenilen Kok Depoya Ekleniyor...`r`ncertutil -addstore -f `"ROOT`" `"`%~dp0GNN-RootCA.cer`"`r`necho.`r`necho Islem basariyla tamamlandi! Artik GNNQS.exe guvenle acilacaktir.`r`npause"
+          [System.IO.File]::WriteAllText("$pwd/SignOutput/Sertifika-Yukle.bat", $batContent, [System.Text.Encoding]::GetEncoding("windows-1254"))
+          
+          # 7. Clean up private pfx from final output
+          Remove-Item -Force ./SignOutput/gnn_codesign.pfx
+
       - name: Upload GNNQS.exe Artifact
         uses: actions/upload-artifact@v4
         with:
           name: GNNQS-x64
-          path: ./SignOutput/GNNQS.exe
+          path: ./SignOutput/
