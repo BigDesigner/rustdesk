@@ -210,10 +210,13 @@ jobs:
           # 2. Export PFX and public CER
           Export-PfxCertificate -Cert $cert -FilePath ./SignOutput/gnn_codesign.pfx -Password $certPwd | Out-Null
           Export-Certificate -Cert $cert -FilePath ./SignOutput/GNN-RootCA.cer | Out-Null
-          Import-Certificate -Cert $cert -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
           
-          # 3. Locate signtool.exe from Windows Kits
-          $signtool = (Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          # 3. Locate signtool.exe from Windows Kits or Visual Studio
+          $signtoolCandidates = @(
+            (Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1),
+            (Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\*\Enterprise\bin\Hostx64\x64\signtool.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1)
+          ) | Where-Object { $_ -and (Test-Path $_) }
+          $signtool = if ($signtoolCandidates.Count -gt 0) { $signtoolCandidates[0] } else { $null }
           Write-Host "Found signtool at: $signtool"
           
           # 4. Sign with RFC 3161 Timestamp (DigiCert / Sectigo)
@@ -224,19 +227,38 @@ jobs:
           )
           
           $signed = $false
-          foreach ($ts in $timestampUrls) {
-            Write-Host "Signing with timestamp: $ts"
-            & $signtool sign /f ./SignOutput/gnn_codesign.pfx /p "Gnn2922**" /fd sha256 /tr $ts /td sha256 /d "GNN Hizli Destek" /du "https://gnn.tr" ./SignOutput/GNNQS.exe
-            if ($LASTEXITCODE -eq 0) {
-              $signed = $true
-              Write-Host "Code signing and timestamping succeeded!"
-              break
+          if ($signtool) {
+            foreach ($ts in $timestampUrls) {
+              Write-Host "Signing with signtool using timestamp: $ts"
+              try {
+                & $signtool sign /f ./SignOutput/gnn_codesign.pfx /p "Gnn2922**" /fd sha256 /tr $ts /td sha256 /d "GNN Hizli Destek" /du "https://gnn.tr" ./SignOutput/GNNQS.exe
+                if ($LASTEXITCODE -eq 0) {
+                  $signed = $true
+                  Write-Host "Code signing and timestamping succeeded!"
+                  break
+                }
+              } catch {
+                Write-Host "Signtool attempt with $ts failed: $_"
+              }
+            }
+            if (-not $signed) {
+              Write-Warning "Timestamping failed or timed out, signing without timestamp..."
+              try {
+                & $signtool sign /f ./SignOutput/gnn_codesign.pfx /p "Gnn2922**" /fd sha256 /d "GNN Hizli Destek" ./SignOutput/GNNQS.exe
+                if ($LASTEXITCODE -eq 0) { $signed = $true }
+              } catch {}
             }
           }
           
+          # Fallback to Set-AuthenticodeSignature if signtool was not available or failed
           if (-not $signed) {
-            Write-Warning "Timestamping failed or timed out, falling back to standalone signature..."
-            & $signtool sign /f ./SignOutput/gnn_codesign.pfx /p "Gnn2922**" /fd sha256 /d "GNN Hizli Destek" ./SignOutput/GNNQS.exe
+            Write-Host "Using PowerShell Set-AuthenticodeSignature fallback..."
+            try {
+              Set-AuthenticodeSignature -FilePath ./SignOutput/GNNQS.exe -Certificate $cert -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256 | Out-Null
+              $signed = $true
+            } catch {
+              Set-AuthenticodeSignature -FilePath ./SignOutput/GNNQS.exe -Certificate $cert -HashAlgorithm SHA256 | Out-Null
+            }
           }
           
           # 5. Verify signature
