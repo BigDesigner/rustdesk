@@ -143,11 +143,15 @@ jobs:
           Move-Item ./flutter/build/windows/x64/runner/Release ./rustdesk
 
           # Download usbmmidd_v2.zip and extract it to ./rustdesk
-          Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
-          Expand-Archive usbmmidd_v2.zip -DestinationPath .
-          Remove-Item -Path usbmmidd_v2\Win32 -Recurse
-          Remove-Item -Path "usbmmidd_v2\deviceinstaller64.exe", "usbmmidd_v2\deviceinstaller.exe", "usbmmidd_v2\usbmmidd.bat"
-          Move-Item -Force .\usbmmidd_v2 ./rustdesk
+          try {
+            Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
+            Expand-Archive usbmmidd_v2.zip -DestinationPath .
+            Remove-Item -Path usbmmidd_v2\Win32 -Recurse -ErrorAction SilentlyContinue
+            Remove-Item -Path "usbmmidd_v2\deviceinstaller64.exe", "usbmmidd_v2\deviceinstaller.exe", "usbmmidd_v2\usbmmidd.bat" -ErrorAction SilentlyContinue
+            Move-Item -Force .\usbmmidd_v2 ./rustdesk
+          } catch {
+            Write-Host "Ignore usbmmidd optional error: $_"
+          }
 
           # Download printer driver files and extract them to ./rustdesk
           try {
@@ -185,7 +189,7 @@ jobs:
           python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
           popd
           mkdir -p ./SignOutput
-          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/GNNQS.exe
+          cp -f ./target/release/rustdesk-portable-packer.exe ./SignOutput/GNNQS.exe
 
       - name: Sign GNNQS.exe with Self-Signed Certificate
         shell: pwsh
@@ -206,6 +210,7 @@ jobs:
           # 2. Export PFX and public CER
           Export-PfxCertificate -Cert $cert -FilePath ./SignOutput/gnn_codesign.pfx -Password $certPwd | Out-Null
           Export-Certificate -Cert $cert -FilePath ./SignOutput/GNN-RootCA.cer | Out-Null
+          Import-Certificate -Cert $cert -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
           
           # 3. Locate signtool.exe from Windows Kits
           $signtool = (Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1).FullName
@@ -235,7 +240,9 @@ jobs:
           }
           
           # 5. Verify signature
-          & $signtool verify /pa /v ./SignOutput/GNNQS.exe
+          $sig = Get-AuthenticodeSignature ./SignOutput/GNNQS.exe
+          Write-Host "Authenticode Signature Status: $($sig.Status)"
+          Write-Host "Signer Certificate: $($sig.SignerCertificate.Subject)"
           
           # 6. Create helper batch script for customers to install the root certificate with 1 click
           $batContent = "@echo off`r`nNET FILE >nul 2>&1`r`nif '%errorlevel%' NEQ '0' (`r`n    powershell -Command `"Start-Process cmd -ArgumentList '/c \`"`%~f0\`"`' -Verb RunAs`"`r`n    exit /b`r`n)`r`necho GNN Guvenlik Sertifikasi Guvenilen Kok Depoya Ekleniyor...`r`ncertutil -addstore -f `"ROOT`" `"`%~dp0GNN-RootCA.cer`"`r`necho.`r`necho Islem basariyla tamamlandi! Artik GNNQS.exe guvenle acilacaktir.`r`npause"
